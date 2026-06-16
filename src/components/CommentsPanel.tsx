@@ -58,7 +58,7 @@ export default function CommentsPanel({
         maxResults: "30",
       });
       if (pageToken) params.set("pageToken", pageToken);
-      const res = await fetch(`/api/comments?${params}`);
+      const res = await fetch(`/api/comments?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       return data as {

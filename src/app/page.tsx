@@ -156,7 +156,7 @@ export default function Home() {
       apiKeys: apiKeys.join(","),
       regionCode,
     });
-    fetch(`/api/categories?${params}`)
+    fetch(`/api/categories?${params}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((data) => {
         if (data.categories) setCategories(data.categories);
@@ -187,7 +187,7 @@ export default function Home() {
     try {
       if (tab === "global") {
         const params = new URLSearchParams({ apiKeys: apiKeysParam });
-        const res = await fetch(`/api/global?${params}`);
+        const res = await fetch(`/api/global?${params}`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         setVideos(data.videos);
@@ -208,7 +208,7 @@ export default function Home() {
       });
       if (effectiveCategoryId) params.set("categoryId", effectiveCategoryId);
 
-      const res = await fetch(`/api/trending?${params}`);
+      const res = await fetch(`/api/trending?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setVideos(data.videos);
