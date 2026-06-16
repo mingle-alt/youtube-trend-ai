@@ -83,6 +83,7 @@ export default function Home() {
   const [globalCountries, setGlobalCountries] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [fromCache, setFromCache] = useState(false);
 
   // ── UI state ──────────────────────────────────────────────────────────────
@@ -170,6 +171,7 @@ export default function Home() {
     if (apiKeys.length === 0) return;
     setLoading(true);
     setError("");
+    setWarning("");
     setVideos([]);
     setGlobalCountries([]);
     setSelectedVideo(null);
@@ -211,6 +213,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error);
       setVideos(data.videos);
       setFromCache(!!data.fromCache);
+      setWarning(data.warning ?? "");
       handleApiResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류가 발생했습니다.");
@@ -420,6 +423,13 @@ export default function Home() {
         {error && (
           <div className="mb-4 rounded-xl border border-red-800 bg-red-900/30 p-4 text-sm text-red-300">
             {error}
+          </div>
+        )}
+
+        {/* Warning */}
+        {warning && (
+          <div className="mb-4 rounded-xl border border-yellow-800 bg-yellow-900/30 p-4 text-sm text-yellow-200">
+            {warning}
           </div>
         )}
 

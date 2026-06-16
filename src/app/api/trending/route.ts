@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
       totalResults: data.totalResults,
       usedKeyIndex: 0,
       quotaUsed: 0,
+      warning: data.warning,
     });
     return NextResponse.json(data);
   } catch (error) {

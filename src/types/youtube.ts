@@ -47,6 +47,7 @@ export interface TrendingResponse {
   usedKeyIndex: number;
   quotaUsed: number;
   fromCache?: boolean;
+  warning?: string;
 }
 
 export interface GlobalTrendingResponse {

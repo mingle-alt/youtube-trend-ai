@@ -10,6 +10,18 @@ import {
 } from "@/types/youtube";
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
+const EDUCATION_CATEGORY_ID = "27";
+
+class YouTubeApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public reason: string
+  ) {
+    super(message);
+    this.name = "YouTubeApiError";
+  }
+}
 
 // ─── Key pool ────────────────────────────────────────────────────────────────
 
@@ -34,6 +46,19 @@ function parseDuration(iso: string): string {
   const s = parseInt(m[3] || "0");
   if (h > 0) return `${h}:${String(min).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${min}:${String(s).padStart(2, "0")}`;
+}
+
+function educationQueryForRegion(regionCode: string): string {
+  const queries: Record<string, string> = {
+    BR: "educação",
+    DE: "bildung",
+    FR: "éducation",
+    IN: "education",
+    JP: "教育",
+    KR: "교육",
+    US: "education",
+  };
+  return queries[regionCode] ?? "education";
 }
 
 function isQuotaError(status: number, reason: string): boolean {
@@ -71,9 +96,11 @@ async function ytFetch(
       continue;
     }
 
-    throw new Error(
+    throw new YouTubeApiError(
       (apiError?.message as string) ||
-        `YouTube API 오류 (${res.status})`
+        `YouTube API 오류 (${res.status})`,
+      res.status,
+      reason
     );
   }
   throw new Error(
@@ -104,6 +131,62 @@ function parseVideo(item: Record<string, unknown>, rank: number): YouTubeVideo {
     tags: (snippet.tags as string[]) ?? [],
     duration: parseDuration((cd.duration as string) ?? "PT0S"),
     rank,
+  };
+}
+
+async function fetchVideosByIds(
+  pool: KeyPool,
+  ids: string[],
+  startRank = 1
+): Promise<YouTubeVideo[]> {
+  if (ids.length === 0) return [];
+
+  const data = await ytFetch(pool, "/videos", {
+    part: "snippet,statistics,contentDetails",
+    id: ids.join(","),
+  });
+
+  const rankById = new Map(ids.map((id, i) => [id, startRank + i]));
+  return ((data.items as Record<string, unknown>[]) ?? [])
+    .map((item) => parseVideo(item, rankById.get(item.id as string) ?? startRank))
+    .sort((a, b) => a.rank - b.rank);
+}
+
+async function fetchEducationSearchFallback(
+  pool: KeyPool,
+  regionCode: string,
+  maxResults: number
+): Promise<TrendingResponse> {
+  const publishedAfter = new Date();
+  publishedAfter.setDate(publishedAfter.getDate() - 90);
+
+  const searchData = await ytFetch(pool, "/search", {
+    part: "snippet",
+    type: "video",
+    q: educationQueryForRegion(regionCode),
+    regionCode,
+    order: "viewCount",
+    publishedAfter: publishedAfter.toISOString(),
+    maxResults: String(Math.min(maxResults, 50)),
+  });
+
+  const ids = ((searchData.items as Record<string, unknown>[]) ?? [])
+    .map((item) => {
+      const id = item.id as Record<string, unknown> | undefined;
+      return id?.videoId as string | undefined;
+    })
+    .filter((id): id is string => Boolean(id));
+
+  const videos = await fetchVideosByIds(pool, ids, 1);
+
+  return {
+    videos,
+    nextPageToken: searchData.nextPageToken as string | undefined,
+    totalResults: (searchData.pageInfo as Record<string, number>)?.totalResults ?? videos.length,
+    usedKeyIndex: pool.currentIndex,
+    quotaUsed: 101,
+    warning:
+      "YouTube API가 이 국가의 교육 급상승 차트를 제공하지 않아 최근 90일 교육 검색 결과를 조회수순으로 대체 표시합니다.",
   };
 }
 
@@ -139,8 +222,22 @@ export async function fetchTrendingVideos(
     };
     if (pageToken) params.pageToken = pageToken;
 
-    const data = await ytFetch(pool, "/videos", params);
-    quotaUsed++;
+    let data: Record<string, unknown>;
+    try {
+      data = await ytFetch(pool, "/videos", params);
+      quotaUsed++;
+    } catch (error) {
+      if (
+        error instanceof YouTubeApiError &&
+        error.status === 404 &&
+        error.reason === "notFound" &&
+        categoryId === EDUCATION_CATEGORY_ID &&
+        !pageToken
+      ) {
+        return fetchEducationSearchFallback(pool, regionCode, maxResults);
+      }
+      throw error;
+    }
 
     const pageInfo = data.pageInfo as Record<string, number>;
     totalResults = pageInfo?.totalResults ?? 0;
