@@ -33,7 +33,7 @@ interface KeyPool {
 function buildUrl(endpoint: string, params: Record<string, string>): string {
   const url = new URL(`${YOUTUBE_API_BASE}${endpoint}`);
   for (const [k, v] of Object.entries(params)) {
-    if (v) url.searchParams.set(k, v);
+    if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
   }
   return url.toString();
 }
@@ -61,14 +61,18 @@ function educationQueryForRegion(regionCode: string): string {
   return queries[regionCode] ?? "education";
 }
 
-function isQuotaError(status: number, reason: string): boolean {
-  return (
+function isRetryableError(status: number, reason: string): boolean {
+  if (
     status === 403 &&
     (reason === "quotaExceeded" ||
       reason === "dailyLimitExceeded" ||
       reason === "rateLimitExceeded" ||
       reason === "userRateLimitExceeded")
-  );
+  )
+    return true;
+  // keyInvalid means this specific key is bad — try the next key in the pool
+  if (status === 400 && reason === "keyInvalid") return true;
+  return false;
 }
 
 /**
@@ -81,8 +85,19 @@ async function ytFetch(
   params: Record<string, string>
 ): Promise<Record<string, unknown>> {
   const maxAttempts = pool.keys.length;
+  if (maxAttempts === 0) {
+    throw new YouTubeApiError("API 키가 없습니다. API 키 버튼을 눌러 키를 등록해주세요.", 400, "keyMissing");
+  }
+
+  let lastReason = "";
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const key = pool.keys[pool.currentIndex];
+    if (!key) {
+      // Defensive: skip empty/undefined key slots
+      pool.currentIndex = (pool.currentIndex + 1) % pool.keys.length;
+      continue;
+    }
+
     const res = await fetch(buildUrl(endpoint, { ...params, key }));
     if (res.ok) return (await res.json()) as Record<string, unknown>;
 
@@ -90,21 +105,24 @@ async function ytFetch(
     const apiError = err?.error as Record<string, unknown> | undefined;
     const reason: string =
       ((apiError?.errors as Record<string, unknown>[])?.[0]?.reason as string) ?? "";
+    lastReason = reason;
 
-    if (isQuotaError(res.status, reason) && attempt < maxAttempts - 1) {
+    if (isRetryableError(res.status, reason) && attempt < maxAttempts - 1) {
       pool.currentIndex = (pool.currentIndex + 1) % pool.keys.length;
       continue;
     }
 
-    throw new YouTubeApiError(
-      (apiError?.message as string) ||
-        `YouTube API 오류 (${res.status})`,
-      res.status,
-      reason
-    );
+    const friendlyMsg =
+      reason === "keyInvalid"
+        ? "API 키가 유효하지 않습니다. API 키 버튼을 눌러 올바른 키로 교체해주세요."
+        : ((apiError?.message as string) || `YouTube API 오류 (${res.status})`);
+    throw new YouTubeApiError(friendlyMsg, res.status, reason);
   }
+  const isKeyError = lastReason === "keyInvalid";
   throw new Error(
-    "모든 API 키의 쿼터가 소진되었습니다. 내일 다시 시도하거나 새 키를 등록해주세요."
+    isKeyError
+      ? "등록된 API 키가 유효하지 않습니다. API 키 버튼을 눌러 올바른 키로 교체해주세요."
+      : "모든 API 키의 쿼터가 소진되었습니다. 내일 다시 시도하거나 새 키를 등록해주세요."
   );
 }
 
@@ -229,10 +247,16 @@ export async function fetchTrendingVideos(
     } catch (error) {
       if (
         error instanceof YouTubeApiError &&
-        error.status === 404 &&
-        error.reason === "notFound" &&
         categoryId === EDUCATION_CATEGORY_ID &&
-        !pageToken
+        !pageToken &&
+        (
+          // Category chart not available in this region (various error shapes)
+          error.status === 404 ||
+          error.reason === "notFound" ||
+          error.reason === "videoCategoryNotFound" ||
+          error.reason === "invalidFilter" ||
+          error.reason === "invalidVideoCategoryId"
+        )
       ) {
         return fetchEducationSearchFallback(pool, regionCode, maxResults);
       }

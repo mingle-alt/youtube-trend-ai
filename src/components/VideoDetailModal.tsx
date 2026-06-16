@@ -1,9 +1,13 @@
 "use client";
 
+import { useState } from "react";
+import AiResultPanel from "@/components/AiResultPanel";
+import { AiModel, VideoAnalysisResult } from "@/types/ai";
 import { YouTubeVideo } from "@/types/youtube";
 
 interface Props {
   video: YouTubeVideo;
+  aiModel: AiModel;
   onClose: () => void;
   onOpenComments: () => void;
 }
@@ -25,7 +29,31 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export default function VideoDetailModal({ video, onClose, onOpenComments }: Props) {
+export default function VideoDetailModal({ video, aiModel, onClose, onOpenComments }: Props) {
+  const [aiAnalysis, setAiAnalysis] = useState<VideoAnalysisResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+
+  async function handleAiAnalysis() {
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const res = await fetch("/api/ai/video-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ model: aiModel, video }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAiAnalysis(data as VideoAnalysisResult);
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI 영상 분석 중 오류가 발생했습니다.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
@@ -50,7 +78,7 @@ export default function VideoDetailModal({ video, onClose, onOpenComments }: Pro
           </div>
         </div>
 
-        <div className="p-6">
+        <div className="max-h-[70vh] overflow-y-auto p-6">
           <h2 className="text-lg font-bold leading-snug text-white">{video.title}</h2>
           <p className="mt-1 text-sm text-gray-400">{video.channelTitle}</p>
           <p className="mt-1 text-xs text-gray-600">{formatDate(video.publishedAt)}</p>
@@ -84,7 +112,23 @@ export default function VideoDetailModal({ video, onClose, onOpenComments }: Pro
             </div>
           )}
 
-          <div className="mt-5 flex gap-3">
+          {aiError && (
+            <div className="mt-4 rounded-xl border border-sky-900 bg-sky-950/30 p-3 text-sm text-sky-200">
+              {aiError}
+            </div>
+          )}
+
+          {aiAnalysis && (
+            <div className="mt-4">
+              <AiResultPanel
+                title="영상 AI 분석"
+                data={aiAnalysis as unknown as Record<string, unknown>}
+                onClose={() => setAiAnalysis(null)}
+              />
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
             <a
               href={`https://www.youtube.com/watch?v=${video.id}`}
               target="_blank"
@@ -96,6 +140,16 @@ export default function VideoDetailModal({ video, onClose, onOpenComments }: Pro
               </svg>
               YouTube에서 보기
             </a>
+            <button
+              onClick={handleAiAnalysis}
+              disabled={aiLoading}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-sky-700 py-3 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
+            >
+              <svg className={`h-4 w-4 ${aiLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+              </svg>
+              AI 분석
+            </button>
             <button
               onClick={onOpenComments}
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gray-700 py-3 text-sm font-semibold text-white hover:bg-gray-600"

@@ -9,6 +9,12 @@ import VideoCard from "@/components/VideoCard";
 import VideoDetailModal from "@/components/VideoDetailModal";
 import CommentsPanel from "@/components/CommentsPanel";
 import QuotaWidget from "@/components/QuotaWidget";
+import AiResultPanel from "@/components/AiResultPanel";
+import {
+  AI_MODEL_OPTIONS,
+  AiModel,
+  TrendSummaryResult,
+} from "@/types/ai";
 
 type Tab = "trending" | "education" | "global";
 
@@ -85,6 +91,10 @@ export default function Home() {
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [fromCache, setFromCache] = useState(false);
+  const [aiModel, setAiModel] = useState<AiModel>("openai/gpt-4o-mini");
+  const [aiSummary, setAiSummary] = useState<TrendSummaryResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [selectedVideo, setSelectedVideo] = useState<YouTubeVideo | null>(null);
@@ -97,8 +107,11 @@ export default function Home() {
     const savedKeys = localStorage.getItem("yt_api_keys");
     if (savedKeys) {
       try {
-        const keys: string[] = JSON.parse(savedKeys);
-        if (Array.isArray(keys) && keys.length > 0) {
+        const raw: unknown[] = JSON.parse(savedKeys);
+        const keys = Array.isArray(raw)
+          ? (raw as string[]).map((k) => String(k).trim()).filter(Boolean)
+          : [];
+        if (keys.length > 0) {
           setApiKeys(keys);
           const idx = parseInt(localStorage.getItem("yt_active_key_index") || "0");
           setActiveKeyIndex(Math.min(idx, keys.length - 1));
@@ -176,6 +189,8 @@ export default function Home() {
     setGlobalCountries([]);
     setSelectedVideo(null);
     setFromCache(false);
+    setAiSummary(null);
+    setAiError("");
 
     // Pre-rotate so the currently active key is tried first
     const rotatedKeys = [
@@ -225,6 +240,31 @@ export default function Home() {
   useEffect(() => {
     if (apiKeys.length > 0) fetchVideos();
   }, [apiKeys, fetchVideos]);
+
+  async function handleTrendAiSummary() {
+    if (videos.length === 0) return;
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const res = await fetch("/api/ai/trend-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          model: aiModel,
+          contextLabel: statusText(),
+          videos,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAiSummary(data as TrendSummaryResult);
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI 요약 중 오류가 발생했습니다.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Derived UI values
@@ -284,6 +324,19 @@ export default function Home() {
 
           {/* Right controls */}
           <div className="flex items-center gap-2">
+            <select
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value as AiModel)}
+              className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+              title="AI 모델"
+            >
+              {AI_MODEL_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  AI {option.label}
+                </option>
+              ))}
+            </select>
+
             {/* Quota widget */}
             <QuotaWidget />
 
@@ -360,6 +413,19 @@ export default function Home() {
 
           {/* Right-side actions */}
           <div className="ml-auto flex items-center gap-2">
+            {videos.length > 0 && (
+              <button
+                onClick={handleTrendAiSummary}
+                disabled={aiLoading}
+                className="flex items-center gap-1.5 rounded-lg border border-sky-800 bg-sky-900/40 px-3 py-2 text-sm text-sky-200 hover:bg-sky-900/70 disabled:opacity-50 transition-colors"
+              >
+                <svg className={`h-4 w-4 ${aiLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.25 8.25 18 9.25l-.25-1a2 2 0 0 0-1.5-1.5l-1-.25 1-.25a2 2 0 0 0 1.5-1.5l.25-1 .25 1a2 2 0 0 0 1.5 1.5l1 .25-1 .25a2 2 0 0 0-1.5 1.5Z" />
+                </svg>
+                AI 요약
+              </button>
+            )}
+
             {/* CSV export */}
             {videos.length > 0 && (
               <button
@@ -433,6 +499,20 @@ export default function Home() {
           </div>
         )}
 
+        {aiError && (
+          <div className="mb-4 rounded-xl border border-sky-900 bg-sky-950/30 p-4 text-sm text-sky-200">
+            {aiError}
+          </div>
+        )}
+
+        {aiSummary && (
+          <AiResultPanel
+            title={`${statusText()} AI 요약`}
+            data={aiSummary as unknown as Record<string, unknown>}
+            onClose={() => setAiSummary(null)}
+          />
+        )}
+
         {/* Global info banner */}
         {tab === "global" && !loading && videos.length === 0 && !error && (
           <div className="mb-4 rounded-xl border border-blue-800 bg-blue-900/20 p-4 text-sm text-blue-300">
@@ -495,6 +575,7 @@ export default function Home() {
       {selectedVideo && !showComments && (
         <VideoDetailModal
           video={selectedVideo}
+          aiModel={aiModel}
           onClose={() => setSelectedVideo(null)}
           onOpenComments={() => setShowComments(true)}
         />
@@ -504,6 +585,7 @@ export default function Home() {
       {selectedVideo && showComments && (
         <CommentsPanel
           video={selectedVideo}
+          aiModel={aiModel}
           apiKeys={apiKeys}
           activeKeyIndex={activeKeyIndex}
           onClose={() => {

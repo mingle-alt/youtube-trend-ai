@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import AiResultPanel from "@/components/AiResultPanel";
+import { AiModel, CommentsSummaryResult } from "@/types/ai";
 import { YouTubeVideo, YouTubeComment } from "@/types/youtube";
 
 interface ApiResult {
@@ -10,6 +12,7 @@ interface ApiResult {
 
 interface Props {
   video: YouTubeVideo;
+  aiModel: AiModel;
   apiKeys: string[];
   activeKeyIndex: number;
   onClose: () => void;
@@ -29,6 +32,7 @@ function timeAgo(dateStr: string): string {
 
 export default function CommentsPanel({
   video,
+  aiModel,
   apiKeys,
   activeKeyIndex,
   onClose,
@@ -39,6 +43,9 @@ export default function CommentsPanel({
   const [error, setError] = useState("");
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
   const [loadingMore, setLoadingMore] = useState(false);
+  const [aiSummary, setAiSummary] = useState<CommentsSummaryResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
 
   // Stable ref so the effect doesn't re-run when the callback identity changes
   const onApiResultRef = useRef(onApiResult);
@@ -108,6 +115,27 @@ export default function CommentsPanel({
     }
   }
 
+  async function handleAiSummary() {
+    if (comments.length === 0) return;
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const res = await fetch("/api/ai/comments-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ model: aiModel, video, comments }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAiSummary(data as CommentsSummaryResult);
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI 댓글 요약 중 오류가 발생했습니다.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex">
       <div className="flex-1" onClick={onClose} />
@@ -143,6 +171,13 @@ export default function CommentsPanel({
           <span className="text-sm text-gray-400">
             ({parseInt(video.commentCount).toLocaleString()}개)
           </span>
+          <button
+            onClick={handleAiSummary}
+            disabled={loading || aiLoading || comments.length === 0}
+            className="ml-auto rounded-lg border border-sky-800 bg-sky-900/40 px-3 py-1.5 text-xs font-medium text-sky-200 hover:bg-sky-900/70 disabled:opacity-50"
+          >
+            {aiLoading ? "요약 중..." : "AI 요약"}
+          </button>
         </div>
 
         {/* List */}
@@ -156,6 +191,18 @@ export default function CommentsPanel({
             <div className="rounded-lg border border-red-800 bg-red-900/30 p-4 text-sm text-red-300">
               {error}
             </div>
+          )}
+          {aiError && (
+            <div className="rounded-lg border border-sky-900 bg-sky-950/30 p-4 text-sm text-sky-200">
+              {aiError}
+            </div>
+          )}
+          {aiSummary && (
+            <AiResultPanel
+              title="댓글 AI 요약"
+              data={aiSummary as unknown as Record<string, unknown>}
+              onClose={() => setAiSummary(null)}
+            />
           )}
           {!loading && !error && comments.length === 0 && (
             <p className="py-12 text-center text-sm text-gray-500">댓글이 없습니다.</p>
